@@ -21,137 +21,140 @@ fastify.get('/ping', async () => {
 })
 
 fastify.post('/webhook', async (req, reply) => {
-  const payload = req.body
-  fastify.log.info("📨 Mensagem recebida:", payload)
+    const payload = req.body
+    fastify.log.info("📨 Mensagem recebida:", payload)
 
-  try {
-    const msg = payload.message || {}
-    const chat = payload.chat || {}
-
-    const rawNumber =
-      msg.chatid ||
-      msg.sender ||
-      chat.wa_chatid ||
-      payload.from ||
-      msg.key?.remoteJid ||
-      msg.sender_pn
-
-    if (!rawNumber) {
-      console.error("❌ Número não encontrado. Payload:", payload)
-      return reply.code(400).send({ error: 'Número não encontrado' })
-    }
-
-    const number = rawNumber.replace(/[@:].*/g, '')
-
-    const isFromBot = msg.fromMe === true || msg.owner === process.env.BOT_NUMBER
-
-    const userMessage =
-      msg.text ||
-      msg.content ||
-      payload.text ||
-      payload.body ||
-      msg.message?.conversation ||
-      msg.extendedTextMessage?.text ||
-      msg.imageMessage?.caption ||
-      ''
-
-    let contact = await prisma.contact.findUnique({ where: { phoneNumber: number } })
-    if (!contact) {
-      contact = await prisma.contact.create({ data: { phoneNumber: number } })
-    }
-
-    if (isFromBot) {
-      fastify.log.info(`🤖 Mensagem enviada pelo BOT (${process.env.BOT_NUMBER}) — não será enviada ao n8n`)
-
-      await prisma.message.create({
-        data: {
-          contactId: contact.id,
-          sender: 'BOT',
-          content: userMessage.trim(),
-        },
-      })
-
-      await prisma.activityLog.create({
-        data: {
-          contactId: contact.id,
-          actionType: 'BOT_MESSAGE',
-          message: `Bot enviou: ${userMessage}`,
-        },
-      })
-
-      return reply.code(200).send({ saved: true, from: 'BOT' })
-    }
-
-    fastify.log.info(`💬 Mensagem recebida de ${number}: "${userMessage}"`)
-
-    const response = await fetch(process.env.N8N_WEBHOOK_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    })
-
-    let n8nReply = {}
     try {
-      n8nReply = await response.json()
-    } catch (e) {
-      const text = await response.text()
-      console.warn("⚠️ Resposta não JSON do n8n:", text)
-      n8nReply = { reply: text }
+        const msg = payload.message || {}
+        const chat = payload.chat || {}
+
+        const rawNumber =
+            msg.chatid ||
+            msg.sender ||
+            chat.wa_chatid ||
+            payload.from ||
+            msg.key?.remoteJid ||
+            msg.sender_pn
+
+        if (!rawNumber) {
+            console.error("❌ Número não encontrado. Payload:", payload)
+            return reply.code(400).send({ error: 'Número não encontrado' })
+        }
+
+        const number = rawNumber.replace(/[@:].*/g, '')
+
+        const isFromBot = msg.fromMe === true || msg.owner === process.env.BOT_NUMBER
+
+        const userMessage =
+            msg.text ||
+            msg.content ||
+            payload.text ||
+            payload.body ||
+            msg.message?.conversation ||
+            msg.extendedTextMessage?.text ||
+            msg.imageMessage?.caption ||
+            ''
+
+        let contact = await prisma.contact.findUnique({ where: { phoneNumber: number } })
+        if (!contact) {
+            contact = await prisma.contact.create({ data: { phoneNumber: number } })
+        }
+
+        if (isFromBot) {
+            fastify.log.info(`🤖 Mensagem enviada pelo BOT (${process.env.BOT_NUMBER}) — não será enviada ao n8n`)
+
+            await prisma.message.create({
+                data: {
+                    contactId: contact.id,
+                    sender: 'BOT',
+                    content: userMessage.trim(),
+                },
+            })
+
+            await prisma.activityLog.create({
+                data: {
+                    contactId: contact.id,
+                    actionType: 'BOT_MESSAGE',
+                    message: `Bot enviou: ${userMessage}`,
+                },
+            })
+
+            return reply.code(200).send({ saved: true, from: 'BOT' })
+        }
+
+        fastify.log.info(`💬 Mensagem recebida de ${number}: "${userMessage}"`)
+
+        const response = await fetch(process.env.N8N_WEBHOOK_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        })
+
+        let n8nReply = {}
+        try {
+            n8nReply = await response.json()
+        } catch (e) {
+            const text = await response.text()
+            console.warn("⚠️ Resposta não JSON do n8n:", text)
+            n8nReply = { reply: text }
+        }
+
+        await prisma.message.create({
+            data: {
+                contactId: contact.id,
+                sender: 'USER',
+                content: userMessage.trim(),
+            },
+        })
+
+        await prisma.activityLog.create({
+            data: {
+                contactId: contact.id,
+                actionType: 'SENT_MESSAGE',
+                message: 'Mensagem recebida do usuário',
+            },
+        })
+
+        const replyText =
+            typeof n8nReply === 'string' ? n8nReply : n8nReply.reply
+
+        if (replyText) {
+            const sendResp = await fetch(`${UAZAPI_URL}/send/text`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    token: process.env.UAZAPI_TOKEN,
+                },
+                body: JSON.stringify({ number, text: replyText }),
+            })
+
+            await sendResp.json()
+
+            await prisma.message.create({
+                data: {
+                    contactId: contact.id,
+                    sender: 'BOT',
+                    content: replyText,
+                },
+            })
+
+            await prisma.activityLog.create({
+                data: {
+                    contactId: contact.id,
+                    actionType: 'AUTO_REPLY',
+                    message: `Bot respondeu: ${replyText}`,
+                },
+            })
+        }
+
+        return { ok: true }
+    } catch (err) {
+        fastify.log.error("❌ Erro no webhook:", {
+            message: err.message,
+            stack: err.stack,
+        })
+        return reply.code(500).send({ error: err.message })
     }
-
-    await prisma.message.create({
-      data: {
-        contactId: contact.id,
-        sender: 'USER',
-        content: userMessage.trim(),
-      },
-    })
-
-    await prisma.activityLog.create({
-      data: {
-        contactId: contact.id,
-        actionType: 'SENT_MESSAGE',
-        message: 'Mensagem recebida do usuário',
-      },
-    })
-
-    const replyText =
-      typeof n8nReply === 'string' ? n8nReply : n8nReply.reply
-
-    if (replyText) {
-      const sendResp = await fetch(`${UAZAPI_URL}/send/text`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          token: process.env.UAZAPI_TOKEN,
-        },
-        body: JSON.stringify({ number, text: replyText }),
-      })
-
-      await sendResp.json()
-
-      await prisma.message.create({
-        data: {
-          contactId: contact.id,
-          sender: 'BOT',
-          content: replyText,
-        },
-      })
-
-      await prisma.activityLog.create({
-        data: {
-          contactId: contact.id,
-          actionType: 'AUTO_REPLY',
-          message: `Bot respondeu: ${replyText}`,
-        },
-      })
-    }
-
-    return { ok: true }
-  } catch (err) {
-    fastify.log.error("❌ Erro no webhook:", err)
-    return reply.code(500).send({ error: err.message })
-  }
 })
 
 
@@ -257,7 +260,7 @@ fastify.get('/messages/:contactId', async (req, reply) => {
     return messages
 })
 
-fastify.listen({ 
+fastify.listen({
     port: process.env.PORT || 3000,
     host: '0.0.0.0'
 }, (err, address) => {
