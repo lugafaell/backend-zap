@@ -22,7 +22,7 @@ fastify.get('/ping', async () => {
 
 fastify.post('/webhook', async (req, reply) => {
     const payload = req.body
-    fastify.log.info("📨 Mensagem recebida:", payload)
+    console.log("📨 Mensagem recebida:", JSON.stringify(payload, null, 2))
 
     try {
         const msg = payload.message || {}
@@ -37,7 +37,7 @@ fastify.post('/webhook', async (req, reply) => {
             msg.sender_pn
 
         if (!rawNumber) {
-            console.error("❌ Número não encontrado. Payload:", payload)
+            console.log("❌ Número não encontrado. Payload:", JSON.stringify(payload, null, 2))
             return reply.code(400).send({ error: 'Número não encontrado' })
         }
 
@@ -60,9 +60,8 @@ fastify.post('/webhook', async (req, reply) => {
         }
 
         if (isFromBot) {
-            const botNumber = process.env.BOT_NUMBER
-            fastify.log.info(`🤖 Mensagem enviada pelo BOT (${botNumber}) — não será enviada ao n8n`)
-            fastify.log.info("🧠 Dados da mensagem do BOT:", {
+            console.log(`🤖 Mensagem enviada pelo BOT (${process.env.BOT_NUMBER}) — não será enviada ao n8n`)
+            console.log("🧠 Dados da mensagem do BOT:", JSON.stringify({
                 chatid: msg.chatid,
                 sender: msg.sender,
                 owner: msg.owner,
@@ -70,22 +69,21 @@ fastify.post('/webhook', async (req, reply) => {
                 text: msg.text,
                 content: msg.content,
                 userMessage,
-            })
+            }, null, 2))
 
             try {
                 const cleanMessage = (userMessage || '').trim()
-                if (!cleanMessage) {
-                    fastify.log.warn("⚠️ Mensagem do BOT sem conteúdo textual — salvando placeholder")
-                }
                 const finalMessage = cleanMessage || '[mensagem sem texto]'
-                await prisma.message.create({
+
+                const savedMsg = await prisma.message.create({
                     data: {
                         contactId: contact.id,
                         sender: 'BOT',
                         content: finalMessage,
                     },
                 })
-                fastify.log.info(`💾 Mensagem do BOT salva no banco: "${finalMessage}"`)
+                console.log(`💾 Mensagem do BOT salva no banco: "${finalMessage}"`)
+
                 await prisma.activityLog.create({
                     data: {
                         contactId: contact.id,
@@ -93,18 +91,15 @@ fastify.post('/webhook', async (req, reply) => {
                         message: `Bot enviou: ${finalMessage}`,
                     },
                 })
-                fastify.log.info("✅ Log de atividade criado para mensagem do BOT.")
+                console.log("✅ Log de atividade criado para mensagem do BOT.")
             } catch (err) {
-                fastify.log.error("❌ Erro ao salvar mensagem do BOT:", {
-                    message: err.message,
-                    stack: err.stack,
-                })
+                console.log("❌ Erro ao salvar mensagem do BOT:", err)
             }
 
             return reply.code(200).send({ saved: true, from: 'BOT' })
         }
 
-        fastify.log.info(`💬 Mensagem recebida de ${number}: "${userMessage}"`)
+        console.log(`💬 Mensagem recebida de ${number}: "${userMessage}"`)
 
         const response = await fetch(process.env.N8N_WEBHOOK_URL, {
             method: 'POST',
@@ -117,7 +112,7 @@ fastify.post('/webhook', async (req, reply) => {
             n8nReply = await response.json()
         } catch (e) {
             const text = await response.text()
-            console.warn("⚠️ Resposta não JSON do n8n:", text)
+            console.log("⚠️ Resposta não JSON do n8n:", text)
             n8nReply = { reply: text }
         }
 
@@ -171,10 +166,7 @@ fastify.post('/webhook', async (req, reply) => {
 
         return { ok: true }
     } catch (err) {
-        fastify.log.error("❌ Erro no webhook:", {
-            message: err.message,
-            stack: err.stack,
-        })
+        console.log("❌ Erro no webhook:", err)
         return reply.code(500).send({ error: err.message })
     }
 })
