@@ -21,15 +21,16 @@ fastify.get('/ping', async () => {
 })
 
 fastify.post('/webhook', async (req, reply) => {
-    const message = req.body
-    fastify.log.info("📨 Mensagem recebida:", message)
+    const payload = req.body // renomeei para ficar mais claro
+    fastify.log.info("📨 Mensagem recebida:", payload)
 
     try {
-        console.log("🧩 Estrutura da mensagem recebida do Uazapi:", JSON.stringify(message, null, 2))
+        console.log("🧩 Estrutura da mensagem recebida do Uazapi:", JSON.stringify(payload, null, 2))
+        
         const response = await fetch(process.env.N8N_WEBHOOK_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(message),
+            body: JSON.stringify(payload),
         })
 
         let n8nReply = {};
@@ -41,14 +42,16 @@ fastify.post('/webhook', async (req, reply) => {
             n8nReply = { reply: text };
         }
 
+        // ✅ CORREÇÃO AQUI - acessar os campos corretos
         const rawNumber =
-            message.chatid ||
-            message.sender ||
-            message.from ||
-            message.key?.remoteJid ||
-            message.key?.chatid
+            payload.message?.chatid ||
+            payload.message?.sender ||
+            payload.chat?.wa_chatid ||
+            payload.from ||
+            payload.key?.remoteJid
 
         if (!rawNumber) {
+            console.error("❌ Número não encontrado. Payload:", payload)
             return reply.code(400).send({ error: 'Número não encontrado' })
         }
 
@@ -59,13 +62,15 @@ fastify.post('/webhook', async (req, reply) => {
             contact = await prisma.contact.create({ data: { phoneNumber: number } })
         }
 
+        // ✅ CORREÇÃO AQUI - pegar o texto da mensagem
         const userMessage =
-            message.text ||
-            message.body ||
-            message.message?.conversation ||
-            message.message?.extendedTextMessage?.text ||
-            message.message?.imageMessage?.caption ||
-            message.content ||
+            payload.message?.text ||
+            payload.message?.content ||
+            payload.text ||
+            payload.body ||
+            payload.message?.conversation ||
+            payload.message?.extendedTextMessage?.text ||
+            payload.message?.imageMessage?.caption ||
             ''
 
         await prisma.message.create({
@@ -119,7 +124,7 @@ fastify.post('/webhook', async (req, reply) => {
         return { ok: true }
     } catch (err) {
         fastify.log.error("❌ Erro no webhook:", err)
-        reply.code(500).send({ error: err.message })
+        return reply.code(500).send({ error: err.message })
     }
 })
 
