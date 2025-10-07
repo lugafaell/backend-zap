@@ -42,7 +42,6 @@ fastify.post('/webhook', async (req, reply) => {
         }
 
         const number = rawNumber.replace(/[@:].*/g, '')
-
         const isFromBot = msg.fromMe === true || msg.owner === process.env.BOT_NUMBER
 
         const userMessage =
@@ -61,23 +60,46 @@ fastify.post('/webhook', async (req, reply) => {
         }
 
         if (isFromBot) {
-            fastify.log.info(`🤖 Mensagem enviada pelo BOT (${process.env.BOT_NUMBER}) — não será enviada ao n8n`)
-
-            await prisma.message.create({
-                data: {
-                    contactId: contact.id,
-                    sender: 'BOT',
-                    content: userMessage.trim(),
-                },
+            const botNumber = process.env.BOT_NUMBER
+            fastify.log.info(`🤖 Mensagem enviada pelo BOT (${botNumber}) — não será enviada ao n8n`)
+            fastify.log.info("🧠 Dados da mensagem do BOT:", {
+                chatid: msg.chatid,
+                sender: msg.sender,
+                owner: msg.owner,
+                fromMe: msg.fromMe,
+                text: msg.text,
+                content: msg.content,
+                userMessage,
             })
 
-            await prisma.activityLog.create({
-                data: {
-                    contactId: contact.id,
-                    actionType: 'BOT_MESSAGE',
-                    message: `Bot enviou: ${userMessage}`,
-                },
-            })
+            try {
+                const cleanMessage = (userMessage || '').trim()
+                if (!cleanMessage) {
+                    fastify.log.warn("⚠️ Mensagem do BOT sem conteúdo textual — salvando placeholder")
+                }
+                const finalMessage = cleanMessage || '[mensagem sem texto]'
+                await prisma.message.create({
+                    data: {
+                        contactId: contact.id,
+                        sender: 'BOT',
+                        content: finalMessage,
+                    },
+                })
+                fastify.log.info(`💾 Mensagem do BOT salva no banco: "${finalMessage}"`)
+                await prisma.activityLog.create({
+                    data: {
+                        contactId: contact.id,
+                        actionType: 'BOT_MESSAGE',
+                        message: `Bot enviou: ${finalMessage}`,
+                    },
+                })
+                fastify.log.info("✅ Log de atividade criado para mensagem do BOT.")
+            } catch (err) {
+                fastify.log.error("❌ Erro ao salvar mensagem do BOT:", {
+                    message: err.message,
+                    stack: err.stack,
+                })
+            }
 
             return reply.code(200).send({ saved: true, from: 'BOT' })
         }
@@ -156,7 +178,6 @@ fastify.post('/webhook', async (req, reply) => {
         return reply.code(500).send({ error: err.message })
     }
 })
-
 
 fastify.post('/send', async (req, reply) => {
     const { number, text } = req.body
