@@ -25,6 +25,7 @@ fastify.post('/webhook', async (req, reply) => {
     fastify.log.info("📨 Mensagem recebida:", message)
 
     try {
+        console.log("🧩 Estrutura da mensagem recebida do Uazapi:", JSON.stringify(message, null, 2))
         const response = await fetch(process.env.N8N_WEBHOOK_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
