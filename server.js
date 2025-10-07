@@ -25,6 +25,7 @@ fastify.post('/webhook', async (req, reply) => {
   fastify.log.info("📨 Mensagem recebida:", payload)
 
   try {
+    // Extrai o número do remetente
     const rawNumber =
       payload.message?.chatid ||
       payload.message?.sender ||
@@ -39,13 +40,55 @@ fastify.post('/webhook', async (req, reply) => {
 
     const number = rawNumber.replace(/[@:].*/g, '')
 
+    // ✅ Número do bot configurado no .env
     const BOT_NUMBER = process.env.BOT_NUMBER?.replace(/\D/g, '')
-    if (BOT_NUMBER && number === BOT_NUMBER) {
-      fastify.log.info(`🤖 Ignorado: mensagem enviada pelo próprio bot (${BOT_NUMBER})`)
-      return reply.code(200).send({ ignored: true })
+
+    // Identifica quem enviou a mensagem
+    const isFromBot = BOT_NUMBER && number === BOT_NUMBER
+
+    // Extrai o texto da mensagem
+    const userMessage =
+      payload.message?.text ||
+      payload.message?.content ||
+      payload.text ||
+      payload.body ||
+      payload.message?.conversation ||
+      payload.message?.extendedTextMessage?.text ||
+      payload.message?.imageMessage?.caption ||
+      ''
+
+    // Garante que o contato existe
+    let contact = await prisma.contact.findUnique({ where: { phoneNumber: number } })
+    if (!contact) {
+      contact = await prisma.contact.create({ data: { phoneNumber: number } })
     }
 
-    fastify.log.info(`💬 Mensagem vinda de ${number}`)
+    // 🧠 Se for mensagem do próprio bot:
+    if (isFromBot) {
+      fastify.log.info(`🤖 Mensagem enviada pelo BOT (${BOT_NUMBER}) — não será enviada ao n8n`)
+
+      // Apenas salva no banco como mensagem do BOT
+      await prisma.message.create({
+        data: {
+          contactId: contact.id,
+          sender: 'BOT',
+          content: userMessage.trim(),
+        },
+      })
+
+      await prisma.activityLog.create({
+        data: {
+          contactId: contact.id,
+          actionType: 'BOT_MESSAGE',
+          message: `Bot enviou: ${userMessage}`,
+        },
+      })
+
+      return reply.code(200).send({ saved: true, from: 'BOT' })
+    }
+
+    // 🧍‍♂️ Caso contrário, é uma mensagem vinda do usuário — envia pro n8n
+    fastify.log.info(`💬 Mensagem recebida de ${number}: "${userMessage}"`)
 
     const response = await fetch(process.env.N8N_WEBHOOK_URL, {
       method: 'POST',
@@ -62,21 +105,7 @@ fastify.post('/webhook', async (req, reply) => {
       n8nReply = { reply: text }
     }
 
-    let contact = await prisma.contact.findUnique({ where: { phoneNumber: number } })
-    if (!contact) {
-      contact = await prisma.contact.create({ data: { phoneNumber: number } })
-    }
-
-    const userMessage =
-      payload.message?.text ||
-      payload.message?.content ||
-      payload.text ||
-      payload.body ||
-      payload.message?.conversation ||
-      payload.message?.extendedTextMessage?.text ||
-      payload.message?.imageMessage?.caption ||
-      ''
-
+    // Salva a mensagem do usuário
     await prisma.message.create({
       data: {
         contactId: contact.id,
@@ -93,6 +122,7 @@ fastify.post('/webhook', async (req, reply) => {
       },
     })
 
+    // Se o n8n respondeu, envia a resposta
     const replyText =
       typeof n8nReply === 'string' ? n8nReply : n8nReply.reply
 
