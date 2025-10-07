@@ -1,0 +1,46 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Contact {
+  id         String       @id @default(cuid())
+  phoneNumber String      @unique
+  name        String?
+  createdAt   DateTime    @default(now())
+  messages    Message[]
+  logs        ActivityLog[]
+}
+
+model Message {
+  id         String     @id @default(cuid())
+  contactId  String
+  contact    Contact    @relation(fields: [contactId], references: [id])
+  sender     SenderType
+  content    String
+  timestamp  DateTime   @default(now())
+}
+
+model ActivityLog {
+  id         String       @id @default(cuid())
+  contactId  String?
+  contact    Contact?     @relation(fields: [contactId], references: [id])
+  actionType ActionType
+  message    String
+  timestamp  DateTime     @default(now())
+}
+
+enum SenderType {
+  USER
+  BOT
+}
+
+enum ActionType {
+  SENT_MESSAGE
+  RECEIVED_MESSAGE
+  AUTO_REPLY
+}
