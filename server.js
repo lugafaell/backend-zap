@@ -12,7 +12,7 @@ const UAZAPI_URL = process.env.UAZAPI_URL
 const N8N_WEBHOOK = process.env.N8N_WEBHOOK_URL
 
 await fastify.register(cors, {
-    origin: ['http://localhost:5173'],
+    origin: '*',
     methods: ['GET', 'POST', 'OPTIONS'],
 })
 
