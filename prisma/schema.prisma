@@ -34,6 +34,16 @@ model ActivityLog {
   timestamp  DateTime     @default(now())
 }
 
+model BotSettings {
+  id           String   @id @default(cuid())
+  personality  String   @default("divertido")
+  language     String   @default("pt")
+  autoJokes    Boolean  @default(true)
+  autoTime     Boolean  @default(true)
+  autoGreeting Boolean  @default(true)
+  updatedAt    DateTime @updatedAt
+}
+
 enum SenderType {
   USER
   BOT
