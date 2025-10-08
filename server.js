@@ -254,6 +254,51 @@ fastify.get('/messages/:contactId', async (req, reply) => {
     return messages
 })
 
+fastify.get('/bot/settings', async (req, reply) => {
+  try {
+    const settings = await prisma.botSettings.findFirst()
+    if (!settings) {
+      const defaultSettings = await prisma.botSettings.create({
+        data: {
+          personality: "divertido",
+          language: "pt",
+          autoJokes: true,
+          autoTime: true,
+          autoGreeting: true,
+        },
+      })
+      return reply.send(defaultSettings)
+    }
+    return reply.send(settings)
+  } catch (err) {
+    reply.code(500).send({ error: err.message })
+  }
+})
+
+fastify.post('/bot/settings', async (req, reply) => {
+  try {
+    const { personality, language, autoJokes, autoTime, autoGreeting } = req.body
+
+    const existing = await prisma.botSettings.findFirst()
+
+    let updated
+    if (existing) {
+      updated = await prisma.botSettings.update({
+        where: { id: existing.id },
+        data: { personality, language, autoJokes, autoTime, autoGreeting },
+      })
+    } else {
+      updated = await prisma.botSettings.create({
+        data: { personality, language, autoJokes, autoTime, autoGreeting },
+      })
+    }
+
+    return reply.send(updated)
+  } catch (err) {
+    reply.code(500).send({ error: err.message })
+  }
+})
+
 fastify.listen({
     port: process.env.PORT || 3000,
     host: '0.0.0.0'
