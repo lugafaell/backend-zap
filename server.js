@@ -201,6 +201,7 @@ fastify.post('/send', async (req, reply) => {
                 message: `Mensagem enviada manualmente: ${text}`,
             },
         })
+        console.log(data)
         return data
     } catch (err) {
         reply.code(500).send({ error: err.message })
