@@ -57,19 +57,30 @@ fastify.post('/webhook', async (req, reply) => {
             contact = await prisma.contact.create({ data: { phoneNumber: number } })
         }
 
+        let botSettings = await prisma.botSettings.findFirst()
+        if (!botSettings) {
+            botSettings = await prisma.botSettings.create({
+                data: {
+                    personality: "divertido",
+                    language: "pt",
+                    autoJokes: true,
+                    autoTime: true,
+                    autoGreeting: true,
+                },
+            })
+        }
+
         if (isFromBot) {
             try {
                 const cleanMessage = (userMessage || '').trim()
                 const finalMessage = cleanMessage || '[mensagem sem texto]'
-
-                const savedMsg = await prisma.message.create({
+                await prisma.message.create({
                     data: {
                         contactId: contact.id,
                         sender: 'BOT',
                         content: finalMessage,
                     },
                 })
-
                 await prisma.activityLog.create({
                     data: {
                         contactId: contact.id,
@@ -80,14 +91,20 @@ fastify.post('/webhook', async (req, reply) => {
             } catch (err) {
                 console.log("❌ Erro ao salvar mensagem do BOT:", err)
             }
-
             return reply.code(200).send({ saved: true, from: 'BOT' })
+        }
+
+        const payloadWithSettings = {
+            ...payload,
+            botSettings,
+            messageText: userMessage,
+            phoneNumber: number,
         }
 
         const response = await fetch(process.env.N8N_WEBHOOK_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
+            body: JSON.stringify(payloadWithSettings),
         })
 
         let n8nReply = {}
@@ -114,8 +131,7 @@ fastify.post('/webhook', async (req, reply) => {
             },
         })
 
-        const replyText =
-            typeof n8nReply === 'string' ? n8nReply : n8nReply.reply
+        const replyText = typeof n8nReply === 'string' ? n8nReply : n8nReply.reply
 
         if (replyText) {
             const sendResp = await fetch(`${UAZAPI_URL}/send/text`, {
@@ -126,9 +142,7 @@ fastify.post('/webhook', async (req, reply) => {
                 },
                 body: JSON.stringify({ number, text: replyText }),
             })
-
             await sendResp.json()
-
             await prisma.message.create({
                 data: {
                     contactId: contact.id,
@@ -136,7 +150,6 @@ fastify.post('/webhook', async (req, reply) => {
                     content: replyText,
                 },
             })
-
             await prisma.activityLog.create({
                 data: {
                     contactId: contact.id,
@@ -255,48 +268,48 @@ fastify.get('/messages/:contactId', async (req, reply) => {
 })
 
 fastify.get('/bot/settings', async (req, reply) => {
-  try {
-    const settings = await prisma.botSettings.findFirst()
-    if (!settings) {
-      const defaultSettings = await prisma.botSettings.create({
-        data: {
-          personality: "divertido",
-          language: "pt",
-          autoJokes: true,
-          autoTime: true,
-          autoGreeting: true,
-        },
-      })
-      return reply.send(defaultSettings)
+    try {
+        const settings = await prisma.botSettings.findFirst()
+        if (!settings) {
+            const defaultSettings = await prisma.botSettings.create({
+                data: {
+                    personality: "divertido",
+                    language: "pt",
+                    autoJokes: true,
+                    autoTime: true,
+                    autoGreeting: true,
+                },
+            })
+            return reply.send(defaultSettings)
+        }
+        return reply.send(settings)
+    } catch (err) {
+        reply.code(500).send({ error: err.message })
     }
-    return reply.send(settings)
-  } catch (err) {
-    reply.code(500).send({ error: err.message })
-  }
 })
 
 fastify.post('/bot/settings', async (req, reply) => {
-  try {
-    const { personality, language, autoJokes, autoTime, autoGreeting } = req.body
+    try {
+        const { personality, language, autoJokes, autoTime, autoGreeting } = req.body
 
-    const existing = await prisma.botSettings.findFirst()
+        const existing = await prisma.botSettings.findFirst()
 
-    let updated
-    if (existing) {
-      updated = await prisma.botSettings.update({
-        where: { id: existing.id },
-        data: { personality, language, autoJokes, autoTime, autoGreeting },
-      })
-    } else {
-      updated = await prisma.botSettings.create({
-        data: { personality, language, autoJokes, autoTime, autoGreeting },
-      })
+        let updated
+        if (existing) {
+            updated = await prisma.botSettings.update({
+                where: { id: existing.id },
+                data: { personality, language, autoJokes, autoTime, autoGreeting },
+            })
+        } else {
+            updated = await prisma.botSettings.create({
+                data: { personality, language, autoJokes, autoTime, autoGreeting },
+            })
+        }
+
+        return reply.send(updated)
+    } catch (err) {
+        reply.code(500).send({ error: err.message })
     }
-
-    return reply.send(updated)
-  } catch (err) {
-    reply.code(500).send({ error: err.message })
-  }
 })
 
 fastify.listen({
