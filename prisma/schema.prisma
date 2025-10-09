@@ -7,19 +7,35 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model Contact {
-  id         String       @id @default(cuid())
-  phoneNumber String      @unique
-  name        String?
-  createdAt   DateTime    @default(now())
+model User {
+  id          Int           @id @default(autoincrement())
+  email       String        @unique
+  password    String
+  botNumber   String?       @unique
+  createdAt   DateTime      @default(now())
+  contacts    Contact[]
   messages    Message[]
   logs        ActivityLog[]
+  botSettings BotSettings[]
+}
+
+model Contact {
+  id           String       @id @default(cuid())
+  phoneNumber  String
+  name         String?
+  createdAt    DateTime     @default(now())
+  user         User         @relation(fields: [userId], references: [id])
+  userId       Int
+  messages     Message[]
+  logs         ActivityLog[]
 }
 
 model Message {
   id         String     @id @default(cuid())
   contactId  String
   contact    Contact    @relation(fields: [contactId], references: [id])
+  user       User       @relation(fields: [userId], references: [id])
+  userId     Int
   sender     SenderType
   content    String
   timestamp  DateTime   @default(now())
@@ -29,6 +45,8 @@ model ActivityLog {
   id         String       @id @default(cuid())
   contactId  String?
   contact    Contact?     @relation(fields: [contactId], references: [id])
+  user       User         @relation(fields: [userId], references: [id])
+  userId     Int
   actionType ActionType
   message    String
   timestamp  DateTime     @default(now())
@@ -42,6 +60,8 @@ model BotSettings {
   autoTime     Boolean  @default(true)
   autoGreeting Boolean  @default(true)
   updatedAt    DateTime @updatedAt
+  user         User     @relation(fields: [userId], references: [id])
+  userId       Int
 }
 
 enum SenderType {
