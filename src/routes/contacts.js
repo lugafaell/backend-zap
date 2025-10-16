@@ -115,4 +115,37 @@ export default async function contactsRoutes(fastify) {
 
     return messages
   })
+
+  fastify.delete("/:contactId", { preHandler: [fastify.authenticate] }, async (req, reply) => {
+    const userId = req.user.id;
+    const { contactId } = req.params;
+
+    try {
+      const contact = await prisma.contact.findUnique({
+        where: { id: contactId },
+      });
+
+      if (!contact || contact.userId !== userId) {
+        return reply.code(404).send({ error: "Contato não encontrado ou não pertence ao usuário" });
+      }
+
+      await prisma.message.deleteMany({
+        where: { contactId, userId },
+      });
+
+      await prisma.activityLog.deleteMany({
+        where: { contactId, userId },
+      });
+
+      await prisma.contact.delete({
+        where: { id: contactId },
+      });
+
+      return reply.send({ success: true, message: "Contato e mensagens excluídos com sucesso" });
+    } catch (err) {
+      console.error("Erro ao excluir contato:", err);
+      reply.code(500).send({ error: "Erro interno ao excluir contato" });
+    }
+  });
+
 }
