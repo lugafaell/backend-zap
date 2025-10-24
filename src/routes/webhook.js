@@ -8,6 +8,8 @@ export default async function webhookRoutes(fastify) {
     try {
       const msg = payload.message || {};
       const chat = payload.chat || {};
+
+      // Detecta número de origem
       const rawNumber =
         msg.chatid ||
         msg.sender ||
@@ -16,28 +18,33 @@ export default async function webhookRoutes(fastify) {
         msg.key?.remoteJid ||
         msg.sender_pn;
 
-      if (!rawNumber) return reply.code(400).send({ error: "Número não encontrado" });
+      if (!rawNumber) {
+        return reply.code(400).send({ error: "Número não encontrado" });
+      }
 
-      const number = rawNumber.replace(/[@:].*/g, "");
+      // Remove sufixos e caracteres não numéricos
+      const clean = (num) => (num || "").replace(/[@:].*/g, "").replace(/\D/g, "");
+      const number = clean(rawNumber);
 
+      // Identifica o dono do bot (usuário da plataforma)
       const botOwner = await prisma.user.findFirst({
         where: { botNumber: msg.owner || msg.chatid?.split("@")[0] || null },
       });
 
-      if (!botOwner) return reply.code(401).send({ error: "Bot não reconhecido" });
+      if (!botOwner) {
+        return reply.code(401).send({ error: "Bot não reconhecido" });
+      }
 
-      // Normaliza números removendo sufixos e prefixos
-      const clean = (num) => (num || "").replace(/[@:].*/g, "").replace(/\D/g, "");
-
-      // Número do bot e do remetente
+      // Normaliza número do bot e do remetente
       const botNumber = clean(botOwner.botNumber);
       const senderNumber = clean(
         msg.sender || msg.participant || msg.from || msg.remoteJid || msg.chatid
       );
 
-      // Verifica se a mensagem foi enviada pelo bot
+      // Verifica se a mensagem veio do próprio bot
       const isFromBot = senderNumber === botNumber || msg.fromMe === true;
 
+      // Extrai o texto da mensagem
       const userMessage =
         msg.text ||
         msg.content ||
@@ -48,20 +55,23 @@ export default async function webhookRoutes(fastify) {
         msg.imageMessage?.caption ||
         "";
 
+      // Garante que o contato existe no banco
       let contact = await prisma.contact.findFirst({
         where: { phoneNumber: number, userId: botOwner.id },
       });
 
-      if (!contact)
+      if (!contact) {
         contact = await prisma.contact.create({
           data: { phoneNumber: number, userId: botOwner.id },
         });
+      }
 
+      // Garante que o botSettings existe
       let botSettings = await prisma.botSettings.findFirst({
         where: { userId: botOwner.id },
       });
 
-      if (!botSettings)
+      if (!botSettings) {
         botSettings = await prisma.botSettings.create({
           data: {
             userId: botOwner.id,
@@ -72,10 +82,15 @@ export default async function webhookRoutes(fastify) {
             autoGreeting: true,
           },
         });
+      }
 
+      // ================================
+      // 🧠 Mensagem enviada pelo BOT
+      // ================================
       if (isFromBot) {
         const cleanMessage = (userMessage || "").trim();
         const finalMessage = cleanMessage || "[mensagem sem texto]";
+
         await prisma.message.create({
           data: {
             contactId: contact.id,
@@ -84,6 +99,7 @@ export default async function webhookRoutes(fastify) {
             content: finalMessage,
           },
         });
+
         await prisma.activityLog.create({
           data: {
             contactId: contact.id,
@@ -92,13 +108,42 @@ export default async function webhookRoutes(fastify) {
             message: `Bot enviou: ${finalMessage}`,
           },
         });
+
         return reply.code(200).send({ saved: true, from: "BOT" });
       }
 
+      // ================================
+      // 💬 Mensagem recebida do USUÁRIO
+      // ================================
+      const cleanMessage = (userMessage || "").trim();
+      if (!cleanMessage) {
+        return reply.code(400).send({ error: "Mensagem vazia" });
+      }
+
+      // Salva a mensagem do usuário
+      await prisma.message.create({
+        data: {
+          contactId: contact.id,
+          userId: botOwner.id,
+          sender: "USER",
+          content: cleanMessage,
+        },
+      });
+
+      await prisma.activityLog.create({
+        data: {
+          contactId: contact.id,
+          userId: botOwner.id,
+          actionType: "RECEIVED_MESSAGE",
+          message: "Mensagem recebida do usuário",
+        },
+      });
+
+      // Envia para o n8n processar
       const payloadWithSettings = {
         ...payload,
         botSettings,
-        messageText: userMessage,
+        messageText: cleanMessage,
         phoneNumber: number,
       };
 
@@ -108,6 +153,7 @@ export default async function webhookRoutes(fastify) {
         body: JSON.stringify(payloadWithSettings),
       });
 
+      // Captura resposta do n8n
       let n8nReply = {};
       try {
         n8nReply = await response.json();
@@ -116,26 +162,10 @@ export default async function webhookRoutes(fastify) {
         n8nReply = { reply: text };
       }
 
-      await prisma.message.create({
-        data: {
-          contactId: contact.id,
-          userId: botOwner.id,
-          sender: "USER",
-          content: userMessage.trim(),
-        },
-      });
+      const replyText =
+        typeof n8nReply === "string" ? n8nReply : n8nReply.reply || "";
 
-      await prisma.activityLog.create({
-        data: {
-          contactId: contact.id,
-          userId: botOwner.id,
-          actionType: "SENT_MESSAGE",
-          message: "Mensagem recebida do usuário",
-        },
-      });
-
-      const replyText = typeof n8nReply === "string" ? n8nReply : n8nReply.reply;
-
+      // Se o n8n retornou uma resposta, envia pelo bot
       if (replyText) {
         const sendResp = await fetch(`${UAZAPI_URL}/send/text`, {
           method: "POST",
@@ -148,6 +178,7 @@ export default async function webhookRoutes(fastify) {
 
         await sendResp.json();
 
+        // Salva resposta do bot
         await prisma.message.create({
           data: {
             contactId: contact.id,
@@ -167,8 +198,9 @@ export default async function webhookRoutes(fastify) {
         });
       }
 
-      return { ok: true };
+      return reply.send({ ok: true });
     } catch (err) {
+      console.error("Erro no webhook:", err);
       return reply.code(500).send({ error: err.message });
     }
   });
