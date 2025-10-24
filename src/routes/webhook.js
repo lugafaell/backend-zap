@@ -6,11 +6,8 @@ export default async function webhookRoutes(fastify) {
     const payload = req.body;
 
     try {
-      fastify.log.info("📩 [WEBHOOK] Payload recebido:", payload);
-
       const msg = payload.message || {};
       const chat = payload.chat || {};
-
       const rawNumber =
         msg.chatid ||
         msg.sender ||
@@ -19,28 +16,27 @@ export default async function webhookRoutes(fastify) {
         msg.key?.remoteJid ||
         msg.sender_pn;
 
-      if (!rawNumber)
-        return reply.code(400).send({ error: "Número não encontrado" });
+      if (!rawNumber) return reply.code(400).send({ error: "Número não encontrado" });
 
       const number = rawNumber.replace(/[@:].*/g, "");
-      fastify.log.info("👤 [WEBHOOK] Número identificado:", number);
 
       const botOwner = await prisma.user.findFirst({
         where: { botNumber: msg.owner || msg.chatid?.split("@")[0] || null },
       });
 
-      if (!botOwner)
-        return reply.code(401).send({ error: "Bot não reconhecido" });
+      if (!botOwner) return reply.code(401).send({ error: "Bot não reconhecido" });
 
-      // 🔧 Correção na detecção de mensagens enviadas pelo bot
-      const isFromBot =
-        msg.fromMe === true ||
-        msg.sender === `${botOwner.botNumber}@s.whatsapp.net`;
+      // Normaliza números removendo sufixos e prefixos
+      const clean = (num) => (num || "").replace(/[@:].*/g, "").replace(/\D/g, "");
 
-      fastify.log.info(
-        "🤖 [WEBHOOK] Verificação de origem:",
-        `fromMe=${msg.fromMe}, sender=${msg.sender}, owner=${msg.owner}, botNumber=${botOwner.botNumber}, isFromBot=${isFromBot}`
+      // Número do bot e do remetente
+      const botNumber = clean(botOwner.botNumber);
+      const senderNumber = clean(
+        msg.sender || msg.participant || msg.from || msg.remoteJid || msg.chatid
       );
+
+      // Verifica se a mensagem foi enviada pelo bot
+      const isFromBot = senderNumber === botNumber || msg.fromMe === true;
 
       const userMessage =
         msg.text ||
@@ -51,8 +47,6 @@ export default async function webhookRoutes(fastify) {
         msg.extendedTextMessage?.text ||
         msg.imageMessage?.caption ||
         "";
-
-      fastify.log.info("💬 [WEBHOOK] Mensagem recebida:", userMessage);
 
       let contact = await prisma.contact.findFirst({
         where: { phoneNumber: number, userId: botOwner.id },
@@ -79,13 +73,9 @@ export default async function webhookRoutes(fastify) {
           },
         });
 
-      // 🟡 Caso seja mensagem do próprio bot
       if (isFromBot) {
         const cleanMessage = (userMessage || "").trim();
         const finalMessage = cleanMessage || "[mensagem sem texto]";
-
-        fastify.log.info("📤 [WEBHOOK] Salvando mensagem do BOT:", finalMessage);
-
         await prisma.message.create({
           data: {
             contactId: contact.id,
@@ -94,7 +84,6 @@ export default async function webhookRoutes(fastify) {
             content: finalMessage,
           },
         });
-
         await prisma.activityLog.create({
           data: {
             contactId: contact.id,
@@ -103,22 +92,15 @@ export default async function webhookRoutes(fastify) {
             message: `Bot enviou: ${finalMessage}`,
           },
         });
-
         return reply.code(200).send({ saved: true, from: "BOT" });
       }
 
-      // 🟢 Mensagem do usuário → envia para o n8n
       const payloadWithSettings = {
         ...payload,
         botSettings,
         messageText: userMessage,
         phoneNumber: number,
       };
-
-      fastify.log.info("📨 [WEBHOOK] Enviando payload para N8N:", {
-        url: process.env.N8N_WEBHOOK_URL,
-        body: payloadWithSettings,
-      });
 
       const response = await fetch(process.env.N8N_WEBHOOK_URL, {
         method: "POST",
@@ -133,8 +115,6 @@ export default async function webhookRoutes(fastify) {
         const text = await response.text();
         n8nReply = { reply: text };
       }
-
-      fastify.log.info("📬 [WEBHOOK] Resposta do N8N:", n8nReply);
 
       await prisma.message.create({
         data: {
@@ -154,15 +134,9 @@ export default async function webhookRoutes(fastify) {
         },
       });
 
-      const replyText =
-        typeof n8nReply === "string" ? n8nReply : n8nReply.reply;
+      const replyText = typeof n8nReply === "string" ? n8nReply : n8nReply.reply;
 
       if (replyText) {
-        fastify.log.info("💬 [WEBHOOK] Enviando resposta para usuário:", {
-          number,
-          replyText,
-        });
-
         const sendResp = await fetch(`${UAZAPI_URL}/send/text`, {
           method: "POST",
           headers: {
@@ -195,7 +169,6 @@ export default async function webhookRoutes(fastify) {
 
       return { ok: true };
     } catch (err) {
-      fastify.log.error("❌ [WEBHOOK] Erro:", err);
       return reply.code(500).send({ error: err.message });
     }
   });
