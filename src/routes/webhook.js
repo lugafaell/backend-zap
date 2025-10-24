@@ -106,18 +106,43 @@ export default async function webhookRoutes(fastify) {
         phoneNumber: number,
       };
 
-      const response = await fetch(process.env.N8N_WEBHOOK_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payloadWithSettings),
-      });
+      console.log("\n====== Enviando mensagem para n8n ======");
+      console.log("➡️ URL do webhook:", process.env.N8N_WEBHOOK_URL);
+      console.log("➡️ Número do contato:", number);
+      console.log("➡️ Mensagem:", userMessage);
+      console.log("➡️ Payload final:", JSON.stringify(payloadWithSettings, null, 2));
+      console.log("========================================\n");
+
+      let response;
+      try {
+        response = await fetch(process.env.N8N_WEBHOOK_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payloadWithSettings),
+        });
+      } catch (err) {
+        console.error("❌ Erro ao enviar requisição para o n8n:", err);
+        return reply.code(500).send({ error: "Erro ao enviar para o n8n" });
+      }
+
+      // ✅ Loga o status HTTP e o corpo da resposta
+      console.log("📩 Resposta do n8n - status:", response.status);
 
       let n8nReply = {};
       try {
-        n8nReply = await response.json();
-      } catch {
         const text = await response.text();
-        n8nReply = { reply: text };
+        console.log("📄 Corpo da resposta do n8n:", text);
+        try {
+          n8nReply = JSON.parse(text);
+        } catch {
+          n8nReply = { reply: text };
+        }
+      } catch (err) {
+        console.error("❌ Erro ao ler resposta do n8n:", err);
+      }
+
+      if (!response.ok) {
+        console.error("⚠️ n8n retornou status de erro:", response.status);
       }
 
       // 💾 Salva a mensagem como USER
