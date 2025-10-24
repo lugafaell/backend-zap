@@ -8,6 +8,7 @@ export default async function webhookRoutes(fastify) {
     try {
       const msg = payload.message || {};
       const chat = payload.chat || {};
+
       const rawNumber =
         msg.chatid ||
         msg.sender ||
@@ -16,17 +17,23 @@ export default async function webhookRoutes(fastify) {
         msg.key?.remoteJid ||
         msg.sender_pn;
 
-      if (!rawNumber) return reply.code(400).send({ error: "Número não encontrado" });
+      if (!rawNumber)
+        return reply.code(400).send({ error: "Número não encontrado" });
 
       const number = rawNumber.replace(/[@:].*/g, "");
 
+      // 👉 O número do bot vem do dono da conta (user.botNumber)
       const botOwner = await prisma.user.findFirst({
-        where: { botNumber: msg.owner || msg.chatid?.split("@")[0] || null },
+        where: {
+          botNumber:
+            msg.owner || payload.owner || msg.chatid?.split("@")[0] || null,
+        },
       });
 
-      if (!botOwner) return reply.code(401).send({ error: "Bot não reconhecido" });
+      if (!botOwner)
+        return reply.code(401).send({ error: "Bot não reconhecido" });
 
-      const isFromBot = msg.fromMe === true || msg.owner === botOwner.botNumber;
+      const isFromBot = msg.fromMe === true;
 
       const userMessage =
         msg.text ||
@@ -42,16 +49,17 @@ export default async function webhookRoutes(fastify) {
         where: { phoneNumber: number, userId: botOwner.id },
       });
 
-      if (!contact)
+      if (!contact) {
         contact = await prisma.contact.create({
           data: { phoneNumber: number, userId: botOwner.id },
         });
+      }
 
       let botSettings = await prisma.botSettings.findFirst({
         where: { userId: botOwner.id },
       });
 
-      if (!botSettings)
+      if (!botSettings) {
         botSettings = await prisma.botSettings.create({
           data: {
             userId: botOwner.id,
@@ -62,10 +70,13 @@ export default async function webhookRoutes(fastify) {
             autoGreeting: true,
           },
         });
+      }
 
       if (isFromBot) {
+        // 🟩 Mensagem enviada PELO bot
         const cleanMessage = (userMessage || "").trim();
         const finalMessage = cleanMessage || "[mensagem sem texto]";
+
         await prisma.message.create({
           data: {
             contactId: contact.id,
@@ -74,6 +85,7 @@ export default async function webhookRoutes(fastify) {
             content: finalMessage,
           },
         });
+
         await prisma.activityLog.create({
           data: {
             contactId: contact.id,
@@ -82,9 +94,11 @@ export default async function webhookRoutes(fastify) {
             message: `Bot enviou: ${finalMessage}`,
           },
         });
+
         return reply.code(200).send({ saved: true, from: "BOT" });
       }
 
+      // 🟨 Caso contrário, mensagem recebida do usuário → envia pro n8n
       const payloadWithSettings = {
         ...payload,
         botSettings,
@@ -106,6 +120,7 @@ export default async function webhookRoutes(fastify) {
         n8nReply = { reply: text };
       }
 
+      // 💾 Salva a mensagem como USER
       await prisma.message.create({
         data: {
           contactId: contact.id,
@@ -119,14 +134,16 @@ export default async function webhookRoutes(fastify) {
         data: {
           contactId: contact.id,
           userId: botOwner.id,
-          actionType: "SENT_MESSAGE",
+          actionType: "RECEIVED_MESSAGE",
           message: "Mensagem recebida do usuário",
         },
       });
 
-      const replyText = typeof n8nReply === "string" ? n8nReply : n8nReply.reply;
+      const replyText =
+        typeof n8nReply === "string" ? n8nReply : n8nReply.reply;
 
       if (replyText) {
+        // 📤 Envia a resposta automática
         const sendResp = await fetch(`${UAZAPI_URL}/send/text`, {
           method: "POST",
           headers: {
@@ -159,6 +176,7 @@ export default async function webhookRoutes(fastify) {
 
       return { ok: true };
     } catch (err) {
+      console.error("Erro no webhook:", err);
       return reply.code(500).send({ error: err.message });
     }
   });
