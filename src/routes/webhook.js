@@ -4,6 +4,7 @@ export default async function webhookRoutes(fastify) {
 
   fastify.post("/webhook", async (req, reply) => {
     const payload = req.body;
+    console.log("📩 [WEBHOOK] Payload recebido:", JSON.stringify(payload, null, 2));
 
     try {
       const msg = payload.message || {};
@@ -16,17 +17,25 @@ export default async function webhookRoutes(fastify) {
         msg.key?.remoteJid ||
         msg.sender_pn;
 
-      if (!rawNumber) return reply.code(400).send({ error: "Número não encontrado" });
+      if (!rawNumber) {
+        console.warn("⚠️ [WEBHOOK] Nenhum número encontrado no payload");
+        return reply.code(400).send({ error: "Número não encontrado" });
+      }
 
       const number = rawNumber.replace(/[@:].*/g, "");
+      console.log("👤 [WEBHOOK] Número identificado:", number);
 
       const botOwner = await prisma.user.findFirst({
         where: { botNumber: msg.owner || msg.chatid?.split("@")[0] || null },
       });
 
-      if (!botOwner) return reply.code(401).send({ error: "Bot não reconhecido" });
+      if (!botOwner) {
+        console.warn("⚠️ [WEBHOOK] Bot não reconhecido:", msg.owner);
+        return reply.code(401).send({ error: "Bot não reconhecido" });
+      }
 
       const isFromBot = msg.fromMe === true || msg.owner === botOwner.botNumber;
+      console.log("🤖 [WEBHOOK] Mensagem é do bot?", isFromBot);
 
       const userMessage =
         msg.text ||
@@ -38,20 +47,25 @@ export default async function webhookRoutes(fastify) {
         msg.imageMessage?.caption ||
         "";
 
+      console.log("💬 [WEBHOOK] Mensagem recebida:", userMessage);
+
       let contact = await prisma.contact.findFirst({
         where: { phoneNumber: number, userId: botOwner.id },
       });
 
-      if (!contact)
+      if (!contact) {
+        console.log("📇 [WEBHOOK] Criando novo contato...");
         contact = await prisma.contact.create({
           data: { phoneNumber: number, userId: botOwner.id },
         });
+      }
 
       let botSettings = await prisma.botSettings.findFirst({
         where: { userId: botOwner.id },
       });
 
-      if (!botSettings)
+      if (!botSettings) {
+        console.log("⚙️ [WEBHOOK] Criando configurações padrão do bot...");
         botSettings = await prisma.botSettings.create({
           data: {
             userId: botOwner.id,
@@ -62,10 +76,13 @@ export default async function webhookRoutes(fastify) {
             autoGreeting: true,
           },
         });
+      }
 
+      // Se a mensagem for do próprio bot
       if (isFromBot) {
-        const cleanMessage = (userMessage || "").trim();
-        const finalMessage = cleanMessage || "[mensagem sem texto]";
+        const finalMessage = (userMessage || "[mensagem sem texto]").trim();
+        console.log("📤 [WEBHOOK] Salvando mensagem do BOT:", finalMessage);
+
         await prisma.message.create({
           data: {
             contactId: contact.id,
@@ -85,6 +102,7 @@ export default async function webhookRoutes(fastify) {
         return reply.code(200).send({ saved: true, from: "BOT" });
       }
 
+      // Caso venha do usuário, enviar pro n8n
       const payloadWithSettings = {
         ...payload,
         botSettings,
@@ -92,17 +110,24 @@ export default async function webhookRoutes(fastify) {
         phoneNumber: number,
       };
 
+      console.log("🌐 [WEBHOOK] Enviando para n8n:", process.env.N8N_WEBHOOK_URL);
+      console.log("📦 [WEBHOOK] Payload enviado ao n8n:", JSON.stringify(payloadWithSettings, null, 2));
+
       const response = await fetch(process.env.N8N_WEBHOOK_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payloadWithSettings),
       });
 
+      console.log("📡 [WEBHOOK] Status da resposta do n8n:", response.status);
+
       let n8nReply = {};
       try {
         n8nReply = await response.json();
+        console.log("✅ [WEBHOOK] Resposta JSON do n8n:", n8nReply);
       } catch {
         const text = await response.text();
+        console.log("ℹ️ [WEBHOOK] Resposta de texto do n8n:", text);
         n8nReply = { reply: text };
       }
 
@@ -125,8 +150,10 @@ export default async function webhookRoutes(fastify) {
       });
 
       const replyText = typeof n8nReply === "string" ? n8nReply : n8nReply.reply;
+      console.log("🤖 [WEBHOOK] Resposta interpretada do n8n:", replyText);
 
       if (replyText) {
+        console.log("📤 [WEBHOOK] Enviando resposta via UAZAPI:", replyText);
         const sendResp = await fetch(`${UAZAPI_URL}/send/text`, {
           method: "POST",
           headers: {
@@ -136,7 +163,8 @@ export default async function webhookRoutes(fastify) {
           body: JSON.stringify({ number, text: replyText }),
         });
 
-        await sendResp.json();
+        const sendResult = await sendResp.json();
+        console.log("📬 [WEBHOOK] Resposta da UAZAPI:", sendResult);
 
         await prisma.message.create({
           data: {
@@ -155,11 +183,14 @@ export default async function webhookRoutes(fastify) {
             message: `Bot respondeu: ${replyText}`,
           },
         });
+      } else {
+        console.warn("⚠️ [WEBHOOK] Nenhum texto de resposta vindo do n8n");
       }
 
       return { ok: true };
     } catch (err) {
-      return reply.code(500).send({ error: err.message });
+      console.error("❌ [WEBHOOK] Erro na rota:", err);
+      return reply.code(500).send({ error: err.message, stack: err.stack });
     }
   });
 }
